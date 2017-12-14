@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import argparse
 import re
 import sys
 
@@ -127,9 +128,19 @@ def parse(node, level):
 
 
 if __name__ == "__main__":
-    pgn_fname = sys.argv[1]
-    pgn = open(sys.argv[1])
-    out = re.sub(r'pgn$', 'tex', pgn_fname)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("pgn", help="PGN file with games and variants")
+    parser.add_argument("--number-variations")
+    parser.add_argument("--indent-variations")
+    parser.add_argument("--arrow-last-move")
+    parser.add_argument("--diagrams-start-variation")
+    parser.add_argument("--diagrams-end-variation")
+    parser.add_argument("--color", "user different colors for each variation")
+    parser.add_argument("--flip", "print boards from black's perspective")
+    args = parser.parse_args()
+
+    # Open PGN
+    pgn = open(args.pgn)
 
     games_tex = ''
     while True:
@@ -140,14 +151,7 @@ if __name__ == "__main__":
         games_tex += '\\chapter*{%s}\n\\newgame\n' % game.headers['Event']
         games_tex += parse(game, level=0)
 
-    with open(out, 'w') as fout:
+    # Tex output file
+    tex_fname = re.sub(r'pgn$', 'tex', args.pgn)
+    with open(tex_fname, 'w') as fout:
         print(tex.replace('GAME', games_tex), file=fout)
-
-# Options
-# number-variations
-# use-colors
-# indent-variations
-# flip-board
-# arrow-last-move
-# diagrams-end-variation
-# diagram-variations-root
