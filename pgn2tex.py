@@ -16,6 +16,7 @@ tex = """
 \\usepackage{graphicx}
 \\usepackage{xcolor}
 \\usepackage[margin=0.5in]{geometry}
+\\setlength{\\columnsep}{1cm}
 
 %%\\setlength{\\parskip}{1em}
 %%\\setlength{\\leftskip}{2em}
@@ -30,6 +31,11 @@ tex = """
 \\definecolor{var4}{HTML}{4b2c0d}
 \\definecolor{var5}{HTML}{0d4b4b}
 
+\\newcommand\\N[1]{%%
+  \\noindent
+  \\makebox[0pt][r]{\\makebox[1cm][l]{\\textbf{#1}}}%%
+  \\hspace*{\\parindent}\\ignorespaces}
+
 \\begin{document}
 \\newgame
 GAME
@@ -39,20 +45,26 @@ GAME
 NUM_COLOR = 0
 
 
-def diagram(node, scale=None, position='center'):
+def diagram(node, args, scale=None, position='center'):
     if not scale:
         if node.is_main_line():
             scale = 0.95
         else:
             scale = 0.8
-    # Black point of view: \chessboard[inverse]
     # markmoves={a1-c3, b7-c6}
     # pgfstyle=circle, markfields=g1
-    return '\\begin{%s}\\scalebox{%f}{\\chessboard[setfen=%s,vmarginwidth=.3em]}\\vspace{1ex}\\end{%s}\n' % (
-                position, scale, node.board().fen(), position)
+    # Mark last move if chosen
+    move = ',pgfstyle=straightmove,markmoves={%s-%s}' % (
+        chess.SQUARE_NAMES[node.move.from_square],
+        chess.SQUARE_NAMES[node.move.to_square]) if args.arrow_last_move else ''
+
+    # Flip board if chosen
+    flip = ',inverse' if args.flip else ''
+    return '\\begin{%s}\\scalebox{%f}{\\chessboard[setfen=%s,vmarginwidth=.3em%s%s]}\\vspace{1ex}\\end{%s}\n' % (
+                position, scale, node.board().fen(), flip, move, position)
 
 
-def format_line(line, level):
+def format_line(line, level, args):
     if len(line) == 0:
         return ''
     ret = '\\par\n\\%s{%s }' % (
@@ -66,27 +78,26 @@ def format_line(line, level):
             ret = re.sub(' ', n + ' ', ret, 1)
         else:
             ret = re.sub(r'^((.*? .*?){1}) ', r'\1%s ' % n, ret)
-    if hasattr(line[-1], 'has_diagram'):
-        ret += '\\textit{(D)}'
     if line[-1].comment:
         ret += ' %s\n' % line[-1].comment
-    ret = '\\begin{addmargin}[%dem]{0cm}%s\\end{addmargin}' % (2*level, ret)
+    if args.indent_variations:
+        ret = '\\begin{addmargin}[%dem]{0cm}%s\\end{addmargin}' % (2*level, ret)
     return ret
 
 
-def format_nodes(nodes, level):
+def format_nodes(nodes, level, args):
     ret = ''
     line = []
     for node in nodes:
         line.append(node)
         if node.comment:
-            ret += format_line(line, level)
+            ret += format_line(line, level, args)
             line = []
-    ret += format_line(line, level)
+    ret += format_line(line, level, args)
     return ret
 
 
-def parse(node, level):
+def parse(node, level, args):
     if node.is_end():
         return ''
 
@@ -96,47 +107,54 @@ def parse(node, level):
         nodes.append(node)
         node = node.variations[0]
     nodes.append(node)
-    if node.variations:
-        nodes.append(node.variations[0])
 
     # Escriure el contingut d'aquesta llista
     # Escriure per separat l'últim si després ve un diagrama amb variants
     # Posar un diagrama si hi haurà variants
-    if node.variations:
-        nodes[-1].has_diagram = True
-        ret = format_nodes(nodes[:-1], level) + \
-            format_nodes([nodes[-1]], level) + \
-            diagram(node.variations[0])
+
+    ret = ''
+
+    # If not in the root, add diagram
+    if nodes[0].parent is not None:
+        ret += diagram(nodes[0], args, scale=0.5)
+
+    if node.is_end():
+        ret += format_nodes(nodes, level, args)
+        ret += diagram(node, args, scale=0.5, position='flushright')
     else:
-        ret = format_nodes(nodes, level)
-        ret += diagram(node, scale=0.5, position='flushright')
+        ret += format_nodes(nodes, level, args)
 
-    # Escriure cada variant
-    for i, var in enumerate(node.variations[1:]):
-        if True:  # node.is_main_line():
-            global NUM_COLOR
-            ret += '{\\color{var%d}' % (NUM_COLOR % 6)
-            NUM_COLOR += 1
-        ret += parse(var, level+1)
-        if True:  # node.is_main_line():
-            ret += '}'
+        # For each variation
+        for i, var in enumerate(node.variations[1:] + [node.variations[0]]):
+            # Parse variation
+            variant = parse(var, level+1, args)
 
-    # Escriure la continuació de la línia original
-    if node.variations and node.variations[0].variations:
-        ret += parse(node.variations[0].variations[0], level)
+            # Add variation number if chosen
+            if args.number_variations:
+                variant = '\\N{%d.%d} %s' % (level, i+1, variant)
+
+            # Set color if chosen and not in main line
+            if args.color and i != len(node.variations)-1:
+                global NUM_COLOR
+                variant = '{\\color{var%d}%s}' % (NUM_COLOR % 6, variant)
+                NUM_COLOR += 1
+
+            # Add variation to tex
+            ret += variant
+
     return ret
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("pgn", help="PGN file with games and variants")
-    parser.add_argument("--number-variations")
-    parser.add_argument("--indent-variations")
-    parser.add_argument("--arrow-last-move")
-    parser.add_argument("--diagrams-start-variation")
-    parser.add_argument("--diagrams-end-variation")
-    parser.add_argument("--color", "user different colors for each variation")
-    parser.add_argument("--flip", "print boards from black's perspective")
+    parser.add_argument("--number-variations", action='store_true')
+    parser.add_argument("--indent-variations", action='store_true')
+    parser.add_argument("--arrow-last-move", action='store_true')
+    parser.add_argument("--diagrams-start-variation", action='store_true')
+    parser.add_argument("--diagrams-end-variation", action='store_true')
+    parser.add_argument("--color", help="use different colors for each variation", action='store_true')
+    parser.add_argument("--flip", help="print boards from black's perspective", action='store_true')
     args = parser.parse_args()
 
     # Open PGN
@@ -149,7 +167,7 @@ if __name__ == "__main__":
         if not game:
             break
         games_tex += '\\chapter*{%s}\n\\newgame\n' % game.headers['Event']
-        games_tex += parse(game, level=0)
+        games_tex += parse(game, 0, args)
 
     # Tex output file
     tex_fname = re.sub(r'pgn$', 'tex', args.pgn)
