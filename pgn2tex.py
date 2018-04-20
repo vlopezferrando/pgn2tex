@@ -58,8 +58,35 @@ def diagram(node, args, scale=None, position='center'):
         chess.SQUARE_NAMES[node.move.from_square],
         chess.SQUARE_NAMES[node.move.to_square]) if args.arrow_last_move else ''
 
+    # Get moves
+    p = re.compile(r'\[%cal ([\w,]*)\]')
+    m = p.search(node.comment)
+    colors = {'G': 'green', 'R': 'red'}
+    if m:
+        arrows = m.group(1).split(',')
+        move += ',pgfstyle=straightmove'
+        for arrow in arrows:
+            move += ',color=' + colors[arrow[0]]
+            move += ',markmoves={%s-%s}' % (arrow[1:3], arrow[3:5])
+
+    # Mark squares
+    p = re.compile(r'\[%csl ([\w,]*)\]')
+    m = p.search(node.comment)
+    colors = {'G': 'green', 'R': 'red'}
+    if m:
+        squares = m.group(1).split(',')
+        move += ',pgfstyle=circle'
+        for square in squares:
+            move += ',color=' + colors[square[0]]
+            move += ',markfields=' + square[1:]
+
     # Flip board if chosen
     flip = ',inverse' if args.flip else ''
+
+    # Add if position is right
+    if position == 'flushright':
+        move += ',color=lightgray!60,colorbackboard'
+
     return '\\begin{%s}\\scalebox{%f}{\\chessboard[setfen=%s,vmarginwidth=.3em%s%s]}\\vspace{1ex}\\end{%s}\n' % (
                 position, scale, node.board().fen(), flip, move, position)
 
@@ -67,10 +94,18 @@ def diagram(node, args, scale=None, position='center'):
 def format_line(line, level, args):
     if len(line) == 0:
         return ''
+
+    # Remove first move if it is empty
+    if line[0].move is None:
+        line = line[1:]
+        if len(line) == 0:
+            return ''
+
     ret = '\\par\n\\%s{%s }' % (
         'mainline' if line[0].is_main_line() else 'variation',
         line[0].parent.board().variation_san([n.move for n in line])
         if line[0].parent else '')
+
     # Posat els nags
     if len(line[0].nags):
         n = ''.join([nags[n] for n in line[0].nags])
@@ -79,7 +114,8 @@ def format_line(line, level, args):
         else:
             ret = re.sub(r'^((.*? .*?){1}) ', r'\1%s ' % n, ret)
     if line[-1].comment:
-        ret += ' %s\n' % line[-1].comment
+        ret += ' %s\n' % re.sub(r'\[%c.*\]', '', line[-1].comment)
+
     if args.indent_variations:
         ret = '\\begin{addmargin}[%dem]{0cm}%s\\end{addmargin}' % (2*level, ret)
     return ret
@@ -93,6 +129,7 @@ def format_nodes(nodes, level, args):
         if node.comment:
             ret += format_line(line, level, args)
             line = []
+
     ret += format_line(line, level, args)
     return ret
 
@@ -103,7 +140,8 @@ def parse(node, level, args):
 
     # Fer la llista de nodes que no tenen variants
     nodes = []
-    while len(node.variations) == 1 and not node.is_end():
+    # TODO: encara hi ha algunes fletxes que no em dibuixa
+    while len(node.variations) == 1 and not node.is_end() and '%%cal' not in node.comment and '%%csl' not in node.comment:
         nodes.append(node)
         node = node.variations[0]
     nodes.append(node)
@@ -118,12 +156,11 @@ def parse(node, level, args):
     if nodes[0].parent is not None:
         ret += diagram(nodes[0], args, scale=0.5)
 
+    ret += format_nodes(nodes, level, args)
+
     if node.is_end():
-        ret += format_nodes(nodes, level, args)
         ret += diagram(node, args, scale=0.5, position='flushright')
     else:
-        ret += format_nodes(nodes, level, args)
-
         # For each variation
         for i, var in enumerate(node.variations[1:] + [node.variations[0]]):
             # Parse variation
